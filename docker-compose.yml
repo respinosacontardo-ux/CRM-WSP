@@ -1,0 +1,24 @@
+# Local development: ONLY the PostgreSQL database runs in Docker.
+# The backend and frontend run on your machine with pnpm (see README.md).
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: crm-wsp-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+    ports:
+      # Host port 5433 -> container port 5432 (avoids clashing with a local Postgres on 5432).
+      - "5433:5432"
+    volumes:
+      - crm_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  crm_pgdata:
