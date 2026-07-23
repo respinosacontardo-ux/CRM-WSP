@@ -18,7 +18,13 @@ export class YCloudService {
   }
 
   /**
-   * Verifies the HMAC-SHA256 signature of an incoming webhook.
+   * Verifies the signature of an incoming YCloud webhook.
+   *
+   * YCloud signs with the `YCloud-Signature` header, formatted as
+   * `t=<unix_seconds>,s=<hex_hmac>`. The signed payload is
+   * `{timestamp}.{raw_body}` and the HMAC is SHA-256 with the webhook secret.
+   * See https://docs.ycloud.com/reference/webhook-integration-guide
+   *
    * FAIL-CLOSED: if no secret is configured, returns false (reject everything).
    */
   verifySignature(rawBody: Buffer | undefined, signatureHeader: string | undefined): boolean {
@@ -26,9 +32,25 @@ export class YCloudService {
     if (!secret) return false; // fail-closed
     if (!rawBody || !signatureHeader) return false;
 
-    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
-    // Accept either a raw hex digest or a "sha256=" prefixed value.
-    const provided = signatureHeader.replace(/^sha256=/i, '').trim();
+    // Parse "t=...,s=..." into its parts.
+    const parts: Record<string, string> = {};
+    for (const segment of signatureHeader.split(',')) {
+      const idx = segment.indexOf('=');
+      if (idx === -1) continue;
+      parts[segment.slice(0, idx).trim()] = segment.slice(idx + 1).trim();
+    }
+    const timestamp = parts['t'];
+    const provided = parts['s'];
+    if (!timestamp || !provided) return false;
+
+    // Replay protection: reject timestamps outside a 5-minute window.
+    const tsSeconds = parseInt(timestamp, 10);
+    if (!Number.isFinite(tsSeconds)) return false;
+    if (Math.abs(Date.now() / 1000 - tsSeconds) > 300) return false;
+
+    // signed_payload = "{timestamp}.{raw_body}" (kept as bytes for exactness).
+    const signedPayload = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
+    const expected = createHmac('sha256', secret).update(signedPayload).digest('hex');
 
     const a = Buffer.from(expected, 'utf8');
     const b = Buffer.from(provided, 'utf8');

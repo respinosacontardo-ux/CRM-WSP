@@ -14,8 +14,8 @@ import { LeadsService } from '../leads/leads.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { AgentService } from '../agent/agent.service';
 
-/** Header YCloud sends the signature in. Adjust to match your YCloud setup. */
-const SIGNATURE_HEADER = 'x-ycloud-signature';
+/** Header YCloud sends the signature in (format: "t=<unix>,s=<hex_hmac>"). */
+const SIGNATURE_HEADER = 'ycloud-signature';
 
 @Controller('webhooks')
 export class WebhooksController {
