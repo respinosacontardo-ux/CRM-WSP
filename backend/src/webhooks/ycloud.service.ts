@@ -21,9 +21,16 @@ export class YCloudService {
    * Verifies the signature of an incoming YCloud webhook.
    *
    * YCloud signs with the `YCloud-Signature` header, formatted as
-   * `t=<unix_seconds>,s=<hex_hmac>`. The signed payload is
+   * `t=<unix_seconds>,s=<signature>`. The signed payload is
    * `{timestamp}.{raw_body}` and the HMAC is SHA-256 with the webhook secret.
    * See https://docs.ycloud.com/reference/webhook-integration-guide
+   *
+   * YCloud's secret carries a `whsec_` prefix (Svix-style). The exact byte
+   * handling (raw string vs base64-decoded key, hex vs base64 output) is not
+   * fully explicit in the docs, so we accept the signature if it matches ANY
+   * of the plausible encodings of the SAME secret. This stays secure — every
+   * candidate still requires knowledge of the secret — while avoiding a
+   * fail-closed rejection of legitimate messages due to an encoding mismatch.
    *
    * FAIL-CLOSED: if no secret is configured, returns false (reject everything).
    */
@@ -40,7 +47,8 @@ export class YCloudService {
       parts[segment.slice(0, idx).trim()] = segment.slice(idx + 1).trim();
     }
     const timestamp = parts['t'];
-    const provided = parts['s'];
+    // Some senders prefix the signature with a version, e.g. "v1,<sig>".
+    const provided = (parts['s'] ?? '').replace(/^v\d+,/, '').trim();
     if (!timestamp || !provided) return false;
 
     // Replay protection: reject timestamps outside a 5-minute window.
@@ -50,12 +58,28 @@ export class YCloudService {
 
     // signed_payload = "{timestamp}.{raw_body}" (kept as bytes for exactness).
     const signedPayload = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
-    const expected = createHmac('sha256', secret).update(signedPayload).digest('hex');
 
-    const a = Buffer.from(expected, 'utf8');
-    const b = Buffer.from(provided, 'utf8');
-    if (a.length !== b.length) return false;
-    return timingSafeEqual(a, b);
+    // Candidate keys derived from the secret.
+    const secretNoPrefix = secret.replace(/^whsec_/, '');
+    const keyCandidates: Buffer[] = [
+      Buffer.from(secret, 'utf8'), // whole "whsec_..." string
+      Buffer.from(secretNoPrefix, 'utf8'), // after the prefix
+    ];
+    try {
+      keyCandidates.push(Buffer.from(secretNoPrefix, 'base64')); // Svix-style key
+    } catch {
+      /* ignore invalid base64 */
+    }
+
+    for (const key of keyCandidates) {
+      const digest = createHmac('sha256', key).update(signedPayload).digest();
+      for (const encoded of [digest.toString('hex'), digest.toString('base64')]) {
+        const a = Buffer.from(encoded, 'utf8');
+        const b = Buffer.from(provided, 'utf8');
+        if (a.length === b.length && timingSafeEqual(a, b)) return true;
+      }
+    }
+    return false;
   }
 
   /** Sends a plain-text WhatsApp message via YCloud. */
