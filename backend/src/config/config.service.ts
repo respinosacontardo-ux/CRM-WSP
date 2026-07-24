@@ -15,6 +15,7 @@ export interface SanitizedConfig {
   tone: string;
   timezone: string;
   agentEnabled: boolean;
+  welcomeMessage: string | null;
   agentModel: string | null;
   hasOpenRouterApiKey: boolean;
   /** True when a key exists either in the DB or as an env fallback. */
@@ -81,6 +82,7 @@ export class ConfigService implements OnModuleInit {
       tone: config.tone,
       timezone: config.timezone,
       agentEnabled: config.agentEnabled,
+      welcomeMessage: config.welcomeMessage ?? null,
       agentModel: config.agentModel ?? process.env.AGENT_MODEL ?? null,
       hasOpenRouterApiKey: hasDbKey,
       hasAnyApiKey: hasDbKey || hasEnvKey,
@@ -101,6 +103,7 @@ export class ConfigService implements OnModuleInit {
     if (dto.tone !== undefined) config.tone = dto.tone;
     if (dto.timezone !== undefined) config.timezone = dto.timezone;
     if (dto.agentEnabled !== undefined) config.agentEnabled = dto.agentEnabled;
+    if (dto.welcomeMessage !== undefined) config.welcomeMessage = dto.welcomeMessage;
     if (dto.agentModel !== undefined) config.agentModel = dto.agentModel;
 
     // Secret: only update when a non-empty value is provided.

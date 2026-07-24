@@ -13,6 +13,7 @@ import { YCloudService } from './ycloud.service';
 import { LeadsService } from '../leads/leads.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { AgentService } from '../agent/agent.service';
+import { ConfigService } from '../config/config.service';
 
 @Controller('webhooks')
 export class WebhooksController {
@@ -23,6 +24,7 @@ export class WebhooksController {
     private readonly leads: LeadsService,
     private readonly conversations: ConversationsService,
     private readonly agent: AgentService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -70,7 +72,21 @@ export class WebhooksController {
         lead.name || inbound.from,
       );
 
+      // Detect whether this is the first message of the conversation BEFORE
+      // storing the incoming one.
+      const priorMessages = await this.conversations.recentMessages(conversation.id, 1);
+      const isFirstMessage = priorMessages.length === 0;
+
       await this.conversations.addMessage(conversation.id, 'user', inbound.text);
+
+      // Automatic welcome message on first contact: sent verbatim (no AI).
+      // The agent then takes over from the lead's next reply.
+      const cfg = await this.config.getSanitizedConfig();
+      if (isFirstMessage && cfg.welcomeMessage && cfg.welcomeMessage.trim()) {
+        await this.conversations.addMessage(conversation.id, 'assistant', cfg.welcomeMessage);
+        await this.ycloud.sendText(inbound.from, cfg.welcomeMessage);
+        return;
+      }
 
       const history = await this.conversations.recentMessages(conversation.id, 20);
       const priorHistory = history

@@ -79,6 +79,7 @@ export interface AppConfig {
   tone: string;
   timezone: string;
   agentEnabled: boolean;
+  welcomeMessage: string | null;
   agentModel: string | null;
   hasOpenRouterApiKey: boolean;
   hasAnyApiKey: boolean;

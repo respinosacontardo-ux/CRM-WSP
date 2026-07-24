@@ -98,6 +98,7 @@ export default function AgentPage() {
         tone: config.tone,
         timezone: config.timezone,
         agentEnabled: config.agentEnabled,
+        welcomeMessage: config.welcomeMessage ?? '',
         agentModel: config.agentModel,
         meetingTypes: config.meetingTypes
           .filter((m) => m.name.trim())
@@ -185,6 +186,17 @@ export default function AgentPage() {
                   <Input value={config.timezone} onChange={(e) => update('timezone', e.target.value)} />
                 </Field>
               </div>
+              <Field label="Mensaje de bienvenida automático">
+                <Textarea
+                  rows={6}
+                  value={config.welcomeMessage ?? ''}
+                  onChange={(e) => update('welcomeMessage', e.target.value)}
+                  placeholder="Si lo rellenas, este mensaje se envía tal cual cuando alguien te escribe por primera vez. Déjalo vacío para que responda directamente el agente."
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Se envía solo en el PRIMER mensaje de cada persona. Luego responde el agente. Déjalo vacío para desactivarlo.
+                </p>
+              </Field>
             </div>
           </Card>
 

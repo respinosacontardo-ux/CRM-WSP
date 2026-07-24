@@ -68,6 +68,10 @@ export class UpdateConfigDto {
   @IsBoolean()
   agentEnabled?: boolean;
 
+  @IsOptional()
+  @IsString()
+  welcomeMessage?: string;
+
   // --- AI model ---
   @IsOptional()
   @IsString()

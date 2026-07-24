@@ -34,6 +34,14 @@ export class AppConfig {
   @Column({ default: true })
   agentEnabled: boolean;
 
+  /**
+   * Optional fixed welcome message sent automatically on the FIRST inbound
+   * WhatsApp message of a conversation. When set, it is sent verbatim (no AI)
+   * and the agent takes over from the lead's next reply. Empty = disabled.
+   */
+  @Column({ type: 'text', nullable: true })
+  welcomeMessage: string | null;
+
   // --- AI model (OpenRouter) ---
   /**
    * Secret. Never returned by the API (sanitized to a `has*` boolean).

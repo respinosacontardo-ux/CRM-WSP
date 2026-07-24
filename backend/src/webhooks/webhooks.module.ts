@@ -4,9 +4,10 @@ import { YCloudService } from './ycloud.service';
 import { LeadsModule } from '../leads/leads.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { AgentModule } from '../agent/agent.module';
+import { AppConfigModule } from '../config/config.module';
 
 @Module({
-  imports: [LeadsModule, ConversationsModule, AgentModule],
+  imports: [LeadsModule, ConversationsModule, AgentModule, AppConfigModule],
   controllers: [WebhooksController],
   providers: [YCloudService],
 })
