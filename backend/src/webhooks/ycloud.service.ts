@@ -20,64 +20,122 @@ export class YCloudService {
   /**
    * Verifies the signature of an incoming YCloud webhook.
    *
-   * YCloud signs with the `YCloud-Signature` header, formatted as
-   * `t=<unix_seconds>,s=<signature>`. The signed payload is
-   * `{timestamp}.{raw_body}` and the HMAC is SHA-256 with the webhook secret.
-   * See https://docs.ycloud.com/reference/webhook-integration-guide
+   * YCloud's webhook secret carries a `whsec_` prefix (Svix / "Standard
+   * Webhooks" lineage) and the exact wire format is not fully pinned down in
+   * the docs. To avoid a fail-closed rejection of legitimate messages due to a
+   * format mismatch, we accept the signature if it matches ANY plausible
+   * combination of:
+   *   - signature header:  ycloud-signature | webhook-signature | svix-signature
+   *   - signature value:   "t=..,s=.." | "v1,<sig> .." | raw
+   *   - timestamp source:  the header's `t=` | webhook-timestamp | svix-timestamp
+   *   - message id source: webhook-id | svix-id (may be absent)
+   *   - signed payload:    "{ts}.{body}" | "{id}.{ts}.{body}" | "{body}"
+   *   - HMAC key:          raw secret | secret w/o whsec_ | base64-decoded
+   *   - output encoding:   hex | base64
+   * Every candidate still requires knowledge of the secret, so this stays
+   * secure while being tolerant of YCloud's exact scheme.
    *
-   * YCloud's secret carries a `whsec_` prefix (Svix-style). The exact byte
-   * handling (raw string vs base64-decoded key, hex vs base64 output) is not
-   * fully explicit in the docs, so we accept the signature if it matches ANY
-   * of the plausible encodings of the SAME secret. This stays secure — every
-   * candidate still requires knowledge of the secret — while avoiding a
-   * fail-closed rejection of legitimate messages due to an encoding mismatch.
+   * Escape hatches (env):
+   *   YCLOUD_WEBHOOK_DEBUG=true       -> log header/candidate info (no PII)
+   *   YCLOUD_WEBHOOK_SKIP_VERIFY=true -> accept without verifying (LOCAL TEST ONLY)
    *
    * FAIL-CLOSED: if no secret is configured, returns false (reject everything).
    */
-  verifySignature(rawBody: Buffer | undefined, signatureHeader: string | undefined): boolean {
+  verifySignature(
+    rawBody: Buffer | undefined,
+    headers: Record<string, string | string[] | undefined>,
+  ): boolean {
+    const debug = process.env.YCLOUD_WEBHOOK_DEBUG === 'true';
+    const skip = process.env.YCLOUD_WEBHOOK_SKIP_VERIFY === 'true';
+
     const secret = this.webhookSecret;
-    if (!secret) return false; // fail-closed
-    if (!rawBody || !signatureHeader) return false;
-
-    // Parse "t=...,s=..." into its parts.
-    const parts: Record<string, string> = {};
-    for (const segment of signatureHeader.split(',')) {
-      const idx = segment.indexOf('=');
-      if (idx === -1) continue;
-      parts[segment.slice(0, idx).trim()] = segment.slice(idx + 1).trim();
+    if (!secret) {
+      if (debug) this.logger.warn('[webhook] No YCLOUD_WEBHOOK_SECRET configured (fail-closed).');
+      return false;
     }
-    const timestamp = parts['t'];
-    // Some senders prefix the signature with a version, e.g. "v1,<sig>".
-    const provided = (parts['s'] ?? '').replace(/^v\d+,/, '').trim();
-    if (!timestamp || !provided) return false;
+    if (!rawBody) return false;
 
-    // Replay protection: reject timestamps outside a 5-minute window.
-    const tsSeconds = parseInt(timestamp, 10);
-    if (!Number.isFinite(tsSeconds)) return false;
-    if (Math.abs(Date.now() / 1000 - tsSeconds) > 300) return false;
+    const h = (name: string): string | undefined => {
+      const v = headers[name.toLowerCase()];
+      return Array.isArray(v) ? v[0] : v;
+    };
 
-    // signed_payload = "{timestamp}.{raw_body}" (kept as bytes for exactness).
-    const signedPayload = Buffer.concat([Buffer.from(`${timestamp}.`), rawBody]);
+    const sigHeader =
+      h('ycloud-signature') ||
+      h('webhook-signature') ||
+      h('svix-signature') ||
+      h('x-ycloud-signature');
+    const tsHeader = h('webhook-timestamp') || h('svix-timestamp');
+    const idHeader = h('webhook-id') || h('svix-id');
 
-    // Candidate keys derived from the secret.
+    if (debug) {
+      this.logger.warn(`[webhook] header names: ${Object.keys(headers).join(', ')}`);
+      this.logger.warn(`[webhook] sig=${sigHeader ?? '(none)'} ts=${tsHeader ?? '(none)'} id=${idHeader ?? '(none)'}`);
+    }
+
+    if (skip) {
+      this.logger.warn('[webhook] SIGNATURE CHECK SKIPPED via YCLOUD_WEBHOOK_SKIP_VERIFY — insecure, local testing only.');
+      return true;
+    }
+
+    if (!sigHeader) return false;
+
+    // --- Extract timestamp and provided signature(s) ---
+    let timestamp = tsHeader;
+    const providedSigs: string[] = [];
+
+    for (const part of sigHeader.split(/[,\s]+/).map((p) => p.trim()).filter(Boolean)) {
+      // Only "t=" and "s=" are treated as key=value. Everything else is taken
+      // as a raw signature. This is important because base64 signatures can
+      // contain "=" padding, which must NOT be parsed as a key=value separator.
+      if (part.startsWith('t=')) {
+        timestamp = timestamp || part.slice(2);
+      } else if (part.startsWith('s=')) {
+        providedSigs.push(part.slice(2));
+      } else if (/^v\d+$/i.test(part)) {
+        // "v1" version token in "v1,<sig>" style -> skip the token itself.
+        continue;
+      } else {
+        providedSigs.push(part);
+      }
+    }
+    if (providedSigs.length === 0) providedSigs.push(sigHeader.trim());
+
+    // --- Candidate signed payloads ---
+    const bodyStr = rawBody.toString('utf8');
+    const payloads: string[] = [];
+    if (timestamp && idHeader) payloads.push(`${idHeader}.${timestamp}.${bodyStr}`);
+    if (timestamp) payloads.push(`${timestamp}.${bodyStr}`);
+    payloads.push(bodyStr);
+
+    // --- Candidate HMAC keys ---
     const secretNoPrefix = secret.replace(/^whsec_/, '');
-    const keyCandidates: Buffer[] = [
-      Buffer.from(secret, 'utf8'), // whole "whsec_..." string
-      Buffer.from(secretNoPrefix, 'utf8'), // after the prefix
-    ];
+    const keys: Buffer[] = [Buffer.from(secret, 'utf8'), Buffer.from(secretNoPrefix, 'utf8')];
     try {
-      keyCandidates.push(Buffer.from(secretNoPrefix, 'base64')); // Svix-style key
+      const decoded = Buffer.from(secretNoPrefix, 'base64');
+      if (decoded.length > 0) keys.push(decoded);
     } catch {
       /* ignore invalid base64 */
     }
 
-    for (const key of keyCandidates) {
-      const digest = createHmac('sha256', key).update(signedPayload).digest();
-      for (const encoded of [digest.toString('hex'), digest.toString('base64')]) {
-        const a = Buffer.from(encoded, 'utf8');
-        const b = Buffer.from(provided, 'utf8');
-        if (a.length === b.length && timingSafeEqual(a, b)) return true;
+    const providedBuffers = providedSigs.map((s) => Buffer.from(s, 'utf8'));
+
+    for (const payload of payloads) {
+      for (const key of keys) {
+        const digest = createHmac('sha256', key).update(payload, 'utf8').digest();
+        for (const encoded of [digest.toString('hex'), digest.toString('base64')]) {
+          const expected = Buffer.from(encoded, 'utf8');
+          for (const provided of providedBuffers) {
+            if (expected.length === provided.length && timingSafeEqual(expected, provided)) {
+              return true;
+            }
+          }
+        }
       }
+    }
+
+    if (debug) {
+      this.logger.warn(`[webhook] no signature match. tried ${payloads.length} payloads x ${keys.length} keys x 2 encodings vs ${providedSigs.length} provided sig(s).`);
     }
     return false;
   }

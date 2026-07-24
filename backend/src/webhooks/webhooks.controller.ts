@@ -14,9 +14,6 @@ import { LeadsService } from '../leads/leads.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { AgentService } from '../agent/agent.service';
 
-/** Header YCloud sends the signature in (format: "t=<unix>,s=<hex_hmac>"). */
-const SIGNATURE_HEADER = 'ycloud-signature';
-
 @Controller('webhooks')
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
@@ -37,10 +34,10 @@ export class WebhooksController {
   @HttpCode(200)
   async handleYCloud(
     @Req() req: RawBodyRequest<Request>,
-    @Headers(SIGNATURE_HEADER) signature: string,
+    @Headers() headers: Record<string, string>,
   ): Promise<{ received: true }> {
     // FAIL-CLOSED: no secret configured or bad signature => reject.
-    const valid = this.ycloud.verifySignature(req.rawBody, signature);
+    const valid = this.ycloud.verifySignature(req.rawBody, headers);
     if (!valid) {
       throw new UnauthorizedException('Invalid webhook signature');
     }
