@@ -48,7 +48,9 @@ books demos/sales meetings. One deployment = one company.
 
 ## Agent scope (commercial safeguard)
 
-The agent ONLY qualifies leads and books demos. It must NOT invent prices or
-features that are not in the configured info, must NOT promise guaranteed
-results, and must NOT provide technical support. For pricing/closing/complex
-questions it offers to book a demo or a meeting with the team.
+The agent advises customers, answers questions (including PRICES), qualifies
+leads and books meetings. The one hard rule: it must ONLY use the configured
+information (company description, products, prices) and must NEVER invent data
+that is not configured. When asked something not in the configured info, it says
+so honestly and offers a meeting to confirm — it never makes up figures. It must
+not promise guaranteed results.
